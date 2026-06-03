@@ -38,33 +38,10 @@ Parameters:
     Default: t3.micro
     AllowedValues: [t3.micro, t3.small, t3.medium]
 
-  EC2KeyPairName:
-    Type: AWS::EC2::KeyPair::KeyName
-    Description: EC2接続用キーペア名
-
   AMIID:
     Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
     Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
     Description: Amazon Linux 2023 (x86_64)
-
-  DBInstanceClass:
-    Type: String
-    Default: db.t3.micro
-    AllowedValues: [db.t3.micro, db.t3.small, db.t3.medium]
-
-  DBName:
-    Type: String
-    Default: trainingdb
-
-  DBUsername:
-    Type: String
-    Default: admin
-
-  DBPassword:
-    Type: String
-    NoEcho: true
-    MinLength: 8
-    Description: RDSマスターパスワード（8文字以上）
 
   AdminEmail1SSMPath:
     Type: String
@@ -75,18 +52,6 @@ Parameters:
     Type: String
     Default: /training/admin/email2
     Description: 管理者メール2のSSMパラメータパス
-
-  ASGMinSize:
-    Type: Number
-    Default: 2
-
-  ASGMaxSize:
-    Type: Number
-    Default: 2
-
-  ASGDesiredSize:
-    Type: Number
-    Default: 2
 
   CPUScaleOutThreshold:
     Type: Number
@@ -288,20 +253,6 @@ Resources:
         - Key: Name
           Value: !Sub ${ProjectName}-ec2-sg
 
-  RDSSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: RDS - Allow MySQL from EC2 only
-      VpcId: !Ref VPC
-      SecurityGroupIngress:
-        - IpProtocol: tcp
-          FromPort: 3306
-          ToPort: 3306
-          SourceSecurityGroupId: !Ref EC2SecurityGroup
-      Tags:
-        - Key: Name
-          Value: !Sub ${ProjectName}-rds-sg
-
   # ----------------------------------------------------------
   # ALB (Application Load Balancer)
   # ----------------------------------------------------------
@@ -330,6 +281,11 @@ Resources:
       HealthCheckTimeoutSeconds: 5
       HealthyThresholdCount: 2
       UnhealthyThresholdCount: 3
+      Targets:
+       - Id: !Ref EC2InstanceHttpdOn
+         Port: 80
+       - Id: !Ref EC2InstanceHttpdOff
+         Port: 80
 
   ALBListener:
     Type: AWS::ElasticLoadBalancingV2::Listener
@@ -369,14 +325,33 @@ Resources:
   # ----------------------------------------------------------
   # Launch Template
   # ----------------------------------------------------------
-  EC2LaunchTemplate:
+  #EC2LaunchTemplate:
+  #  Type: AWS::EC2::LaunchTemplate
+  #  Properties:
+  #    LaunchTemplateName: !Sub ${ProjectName}-lt
+  #    LaunchTemplateData:
+  #      ImageId: !Ref AMIID
+  #      InstanceType: !Ref EC2InstanceType
+  #      IamInstanceProfile:
+  #        Arn: !GetAtt EC2InstanceProfile.Arn
+  #      SecurityGroupIds:
+  #        - !Ref EC2SecurityGroup
+  #      UserData:
+  #        Fn::Base64: !Sub |
+  #          #!/bin/bash
+  #          dnf update -y
+  #          dnf install -y httpd
+  #          systemctl start httpd
+  #          systemctl enable httpd
+  #          echo "<br><br><h1>Hello from $(hostname)</h1>" > /var/www/html/index.html
+
+  EC2LaunchTemplateHttpdOn:
     Type: AWS::EC2::LaunchTemplate
     Properties:
-      LaunchTemplateName: !Sub ${ProjectName}-lt
+      LaunchTemplateName: !Sub ${ProjectName}-lt-httpd-on
       LaunchTemplateData:
         ImageId: !Ref AMIID
         InstanceType: !Ref EC2InstanceType
-        KeyName: !Ref EC2KeyPairName
         IamInstanceProfile:
           Arn: !GetAtt EC2InstanceProfile.Arn
         SecurityGroupIds:
@@ -390,85 +365,62 @@ Resources:
             systemctl enable httpd
             echo "<br><br><h1>Hello from $(hostname)</h1>" > /var/www/html/index.html
 
-  # ----------------------------------------------------------
-  # Auto Scaling Group
-  # ----------------------------------------------------------
-  AutoScalingGroup:
-    Type: AWS::AutoScaling::AutoScalingGroup
+  EC2LaunchTemplateHttpdOff:
+    Type: AWS::EC2::LaunchTemplate
     Properties:
-      AutoScalingGroupName: !Sub ${ProjectName}-asg
+      LaunchTemplateName: !Sub ${ProjectName}-lt-httpd-off
+      LaunchTemplateData:
+        ImageId: !Ref AMIID
+        InstanceType: !Ref EC2InstanceType
+        IamInstanceProfile:
+          Arn: !GetAtt EC2InstanceProfile.Arn
+        SecurityGroupIds:
+          - !Ref EC2SecurityGroup
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            dnf update -y
+            dnf install -y httpd
+            systemctl stop httpd || true
+            systemctl disable httpd || true
+            echo "<br><br><h1>Hello from $(hostname)</h1>" > /var/www/html/index.html
+
+  EC2InstanceHttpdOn:
+    Type: AWS::EC2::Instance
+    Properties:
       LaunchTemplate:
-        LaunchTemplateId: !Ref EC2LaunchTemplate
-        Version: !GetAtt EC2LaunchTemplate.LatestVersionNumber
-      MinSize: !Ref ASGMinSize
-      MaxSize: !Ref ASGMaxSize
-      DesiredCapacity: !Ref ASGDesiredSize
-      VPCZoneIdentifier:
-        - !Ref PrivateSubnet1
-        - !Ref PrivateSubnet2
-      TargetGroupARNs:
-        - !Ref ALBTargetGroup
-      HealthCheckType: ELB
-      HealthCheckGracePeriod: 300
+        LaunchTemplateId: !Ref EC2LaunchTemplateHttpdOn
+        Version: !GetAtt EC2LaunchTemplateHttpdOn.LatestVersionNumber
+      SubnetId: !Ref PrivateSubnet1
       Tags:
         - Key: Name
-          Value: !Sub ${ProjectName}-ec2
-          PropagateAtLaunch: true
+          Value: !Sub ${ProjectName}-ec2-1
 
-  # CPU使用率ベースのスケールアウトポリシー
-  ScaleOutPolicy:
-    Type: AWS::AutoScaling::ScalingPolicy
+  EC2InstanceHttpdOff:
+    Type: AWS::EC2::Instance
     Properties:
-      AutoScalingGroupName: !Ref AutoScalingGroup
-      PolicyType: TargetTrackingScaling
-      TargetTrackingConfiguration:
-        PredefinedMetricSpecification:
-          PredefinedMetricType: ASGAverageCPUUtilization
-        TargetValue: !Ref CPUScaleOutThreshold
-
-  # ----------------------------------------------------------
-  # RDS Subnet Group
-  # ----------------------------------------------------------
-  DBSubnetGroup:
-    Type: AWS::RDS::DBSubnetGroup
-    Properties:
-      DBSubnetGroupDescription: RDS Multi-AZ subnet group
-      SubnetIds:
-        - !Ref PrivateSubnet1
-        - !Ref PrivateSubnet2
+      LaunchTemplate:
+        LaunchTemplateId: !Ref EC2LaunchTemplateHttpdOff
+        Version: !GetAtt EC2LaunchTemplateHttpdOff.LatestVersionNumber
+      SubnetId: !Ref PrivateSubnet2
       Tags:
         - Key: Name
-          Value: !Sub ${ProjectName}-db-subnet-group
+          Value: !Sub ${ProjectName}-ec2-2
 
-  # ----------------------------------------------------------
-  # RDS Multi-AZ (MySQL)
-  # ----------------------------------------------------------
-  RDSInstance:
-    Type: AWS::RDS::DBInstance
-    DeletionPolicy: Delete
-    Properties:
-      DBInstanceIdentifier: !Sub ${ProjectName}-rds
-      DBInstanceClass: !Ref DBInstanceClass
-      Engine: mysql
-      EngineVersion: '8.0'
-      MasterUsername: !Ref DBUsername
-      MasterUserPassword: !Ref DBPassword
-      DBName: !Ref DBName
-      MultiAZ: true
-      StorageType: gp3
-      AllocatedStorage: '20'
-      StorageEncrypted: true
-      DBSubnetGroupName: !Ref DBSubnetGroup
-      VPCSecurityGroups:
-        - !Ref RDSSecurityGroup
-      BackupRetentionPeriod: 0
-      DeletionProtection: false
-      EnableCloudwatchLogsExports:
-        - error
-        - slowquery
-      Tags:
-        - Key: Name
-          Value: !Sub ${ProjectName}-rds
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
   # ----------------------------------------------------------
   # SNS Topic (アラーム通知)
@@ -486,25 +438,25 @@ Resources:
   # ----------------------------------------------------------
   # CloudWatch Alarms
   # ----------------------------------------------------------
-  EC2CPUAlarm:
-    Type: AWS::CloudWatch::Alarm
-    Properties:
-      AlarmName: !Sub ${ProjectName}-ec2-cpu-high
-      AlarmDescription: EC2 CPU使用率が50%超過
-      MetricName: CPUUtilization
-      Namespace: AWS/EC2
-      Statistic: Average
-      Period: 300
-      EvaluationPeriods: 2
-      Threshold: 50
-      ComparisonOperator: GreaterThanThreshold
-      Dimensions:
-        - Name: AutoScalingGroupName
-          Value: !Ref AutoScalingGroup
-      AlarmActions:
-        - !Ref AlarmSNSTopic
-      OKActions:
-        - !Ref AlarmSNSTopic
+#  EC2CPUAlarm:
+#    Type: AWS::CloudWatch::Alarm
+#    Properties:
+#      AlarmName: !Sub ${ProjectName}-ec2-cpu-high
+#      AlarmDescription: EC2 CPU使用率が50%超過
+#      MetricName: CPUUtilization
+#      Namespace: AWS/EC2
+#      Statistic: Average
+#      Period: 300
+#      EvaluationPeriods: 2
+#      Threshold: 50
+#      ComparisonOperator: GreaterThanThreshold
+#      Dimensions:
+#        - Name: AutoScalingGroupName
+#          Value: !Ref AutoScalingGroup
+#      AlarmActions:
+#        - !Ref AlarmSNSTopic
+#      OKActions:
+#        - !Ref AlarmSNSTopic
 
   ALBUnhealthyHostAlarm:
     Type: AWS::CloudWatch::Alarm
@@ -526,44 +478,6 @@ Resources:
       AlarmActions:
         - !Ref AlarmSNSTopic
       OKActions:
-        - !Ref AlarmSNSTopic
-
-  RDSCPUAlarm:
-    Type: AWS::CloudWatch::Alarm
-    Properties:
-      AlarmName: !Sub ${ProjectName}-rds-cpu-high
-      AlarmDescription: RDS CPU使用率が80%超過
-      MetricName: CPUUtilization
-      Namespace: AWS/RDS
-      Statistic: Average
-      Period: 300
-      EvaluationPeriods: 2
-      Threshold: 80
-      ComparisonOperator: GreaterThanThreshold
-      Dimensions:
-        - Name: DBInstanceIdentifier
-          Value: !Ref RDSInstance
-      AlarmActions:
-        - !Ref AlarmSNSTopic
-      OKActions:
-        - !Ref AlarmSNSTopic
-
-  RDSFreeStorageAlarm:
-    Type: AWS::CloudWatch::Alarm
-    Properties:
-      AlarmName: !Sub ${ProjectName}-rds-storage-low
-      AlarmDescription: RDS空き容量が2GB未満
-      MetricName: FreeStorageSpace
-      Namespace: AWS/RDS
-      Statistic: Average
-      Period: 300
-      EvaluationPeriods: 1
-      Threshold: 2000000000
-      ComparisonOperator: LessThanThreshold
-      Dimensions:
-        - Name: DBInstanceIdentifier
-          Value: !Ref RDSInstance
-      AlarmActions:
         - !Ref AlarmSNSTopic
 
   # ----------------------------------------------------------
@@ -672,6 +586,16 @@ Resources:
             Condition:
               StringEquals:
                 s3:x-amz-acl: bucket-owner-full-control
+          - Sid: AllowAdministratorsFullAccess
+            Effect: Allow
+            Principal:
+             AWS:
+              - !Sub arn:aws:iam::${AWS::AccountId}:user/Administrator
+              - !Sub arn:aws:iam::${AWS::AccountId}:user/Administrator2
+            Action: s3:*
+            Resource:
+              - !GetAtt CloudTrailBucket.Arn
+              - !Sub ${CloudTrailBucket.Arn}/*
 
   # CloudTrail バケット削除時にオブジェクトを空にするトリガー
   CloudTrailBucketCleanup:
@@ -743,59 +667,10 @@ Resources:
         - arn:aws:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForBackup
         - arn:aws:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForRestores
 
-  # ----------------------------------------------------------
-  # EventBridge Rule（CloudFormationスタック操作の監視）
-  # ----------------------------------------------------------
-  CloudFormationEventRule:
-    Type: AWS::Events::Rule
-    Properties:
-      Name: !Sub ${ProjectName}-cfn-stack-changes
-      Description: CloudFormationスタックの作成・削除を検知してSNS通知
-      State: ENABLED
-      EventPattern:
-        source:
-          - aws.cloudformation
-        detail-type:
-          - CloudFormation Stack Status Change
-        detail:
-          status-details:
-            status:
-              - CREATE_COMPLETE
-              - CREATE_FAILED
-              - DELETE_COMPLETE
-              - DELETE_FAILED
-              - ROLLBACK_COMPLETE
-      Targets:
-        - Id: AlarmSNSTarget
-          Arn: !Ref AlarmSNSTopic
-          InputTransformer:
-            InputPathsMap:
-              stackName: '$.detail.stack-id'
-              status: '$.detail.status-details.status'
-              time: '$.time'
-              account: '$.account'
-            InputTemplate: |
-              "CloudFormationスタック変更通知"
-              "アカウント: <account>"
-              "時刻: <time>"
-              "スタック: <stackName>"
-              "ステータス: <status>"
+ 
 
-  # EventBridgeからSNSへのパブリッシュ許可
-  SNSTopicPolicyForEventBridge:
-    Type: AWS::SNS::TopicPolicy
-    Properties:
-      Topics:
-        - !Ref AlarmSNSTopic
-      PolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Sid: AllowEventBridgePublish
-            Effect: Allow
-            Principal:
-              Service: events.amazonaws.com
-            Action: sns:Publish
-            Resource: !Ref AlarmSNSTopic
+
+
 
 
 # ============================================================
@@ -811,10 +686,6 @@ Outputs:
   ALBDNSName:
     Description: ALB DNS名（アクセスURL）
     Value: !GetAtt ALB.DNSName
-
-  RDSEndpoint:
-    Description: RDSエンドポイント
-    Value: !GetAtt RDSInstance.Endpoint.Address
 
   AppS3BucketName:
     Description: アプリ用S3バケット名
