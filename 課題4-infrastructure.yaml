@@ -590,7 +590,7 @@ Resources:
             Effect: Allow
             Principal:
              AWS:
-              - arn:aws:iam::${AWS::AccountId}:role/s3-Fullaccess-Role
+              - !Sub arn:aws:iam::${AWS::AccountId}:role/s3-Fullaccess-Role
             Action: s3:*
             Resource:
               - !GetAtt CloudTrailBucket.Arn
