@@ -586,12 +586,11 @@ Resources:
             Condition:
               StringEquals:
                 s3:x-amz-acl: bucket-owner-full-control
-          - Sid: AllowAdministratorsFullAccess
+          - Sid: AllowS3FullAccessRole
             Effect: Allow
             Principal:
              AWS:
-              - !Sub arn:aws:iam::${AWS::AccountId}:user/Administrator
-              - !Sub arn:aws:iam::${AWS::AccountId}:user/Administrator2
+              - arn:aws:iam::${AWS::AccountId}:role/s3-Fullaccess-Role
             Action: s3:*
             Resource:
               - !GetAtt CloudTrailBucket.Arn
