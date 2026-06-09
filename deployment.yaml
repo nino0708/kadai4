@@ -1,5 +1,5 @@
 template-file-path: 課題4-infrastructure.yaml
 parameters:
-  ProjectName: aws-training
-  EC2InstanceType: t3.micro
-  CPUScaleOutThreshold: "50"
+ ProjectName: aws-training
+ EC2InstanceType: t3.micro
+ CPUScaleOutThreshold: "50"
