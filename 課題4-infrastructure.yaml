@@ -5,7 +5,7 @@ Description: >
   CloudWatch / SNS / CloudTrail / S3 / AWS Backup
 
 # ============================================================
-# Parameters
+# Parameters　　
 # ============================================================
 Parameters:
   ProjectName:
@@ -68,7 +68,7 @@ Resources:
   # ----------------------------------------------------------
   VPC:
     Type: AWS::EC2::VPC
-    Properties:
+    Properti
       CidrBlock: !Ref VpcCidr
       EnableDnsSupport: true
       EnableDnsHostnames: true
@@ -618,31 +618,7 @@ Resources:
       IncludeGlobalServiceEvents: true
       EnableLogFileValidation: true
 
-  # ----------------------------------------------------------
-  # S3 Bucket (汎用 / アプリ用)
-  # ----------------------------------------------------------
-  AppS3Bucket:
-    Type: AWS::S3::Bucket
-    Properties:
-      BucketName: !Sub ${ProjectName}-app-${AWS::AccountId}
-      BucketEncryption:
-        ServerSideEncryptionConfiguration:
-          - ServerSideEncryptionByDefault:
-              SSEAlgorithm: AES256
-      PublicAccessBlockConfiguration:
-        BlockPublicAcls: true
-        BlockPublicPolicy: true
-        IgnorePublicAcls: true
-        RestrictPublicBuckets: true
-
-  # アプリ用バケット削除時にオブジェクトを空にするトリガー
-  AppS3BucketCleanup:
-    Type: AWS::CloudFormation::CustomResource
-    DependsOn: AppS3Bucket
-    Properties:
-      ServiceToken: !GetAtt BucketCleanupLambda.Arn
-      BucketName: !Ref AppS3Bucket
-
+ 
   # ----------------------------------------------------------
   # AWS Backup
   # ----------------------------------------------------------
@@ -664,7 +640,6 @@ Resources:
             Action: sts:AssumeRole
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForBackup
-        - arn:aws:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForRestores
 
  
 
